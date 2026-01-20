@@ -24,7 +24,7 @@ from storage import (
     upsert_matter, get_all_entries, get_entries_by_week,
     add_entry, update_entry, delete_entry,
     save_invoice_file, delete_invoice_file, get_invoice_path,
-    get_matter_total_minutes
+    get_matter_total_minutes, get_unique_action_descriptions
 )
 from report import (
     generate_work_entries_csv, generate_weekly_summary_csv, generate_pdf_report
@@ -131,10 +131,26 @@ def render_sidebar():
     total_matters = len(data.get("matters", []))
     total_minutes = sum(e.get("total_minutes", 0) for e in data.get("entries", []))
     
+    # Calculate week statistics
+    all_weeks = get_all_weeks()
+    week_totals = {}
+    for entry in data.get("entries", []):
+        week_idx = entry.get("week_index", 0)
+        week_totals[week_idx] = week_totals.get(week_idx, 0) + entry.get("total_minutes", 0)
+    
+    # Count weeks below thresholds
+    weeks_under_12h = sum(1 for w in all_weeks if week_totals.get(w["week_index"], 0) < 720)  # 12 * 60
+    weeks_under_20h = sum(1 for w in all_weeks if week_totals.get(w["week_index"], 0) < 1200)  # 20 * 60
+    
     st.sidebar.markdown("### סטטיסטיקה / Stats")
     st.sidebar.metric("רישומים / Entries", total_entries)
     st.sidebar.metric("תיקים / Matters", total_matters)
     st.sidebar.metric("סה״כ שעות / Total Time", format_hhmm(total_minutes))
+    
+    st.sidebar.divider()
+    st.sidebar.markdown("### שבועות חסרים / Low Hours")
+    st.sidebar.metric("פחות מ-12 שעות / Under 12h", weeks_under_12h, delta=None, delta_color="inverse")
+    st.sidebar.metric("פחות מ-20 שעות / Under 20h", weeks_under_20h, delta=None, delta_color="inverse")
 
 
 # ============================================================================
@@ -181,8 +197,8 @@ def render_add_entry_page():
             matters = get_all_matters(data)
             matter_names = [m["name"] for m in matters]
             
-            # Add "new matter" option
-            matter_options = ["-- בחר תיק / Select Matter --", "➕ תיק חדש / New Matter"] + matter_names
+            # Simple options - just select matter or nothing
+            matter_options = ["-- בחר תיק / Select Matter --"] + matter_names
             
             if entry:
                 current_matter = get_matter_by_id(data, entry["matter_id"])
@@ -196,17 +212,21 @@ def render_add_entry_page():
                 index=default_idx
             )
             
-            # New matter fields
+            # New matter fields - always available in expander
             new_matter_name = ""
             new_case_type = ""
-            if selected_matter_option == "➕ תיק חדש / New Matter":
-                new_matter_name = st.text_input("שם תיק חדש / New Matter Name")
-                new_case_type = st.text_input("סוג תיק / Case Type")
-            elif selected_matter_option not in ["-- בחר תיק / Select Matter --"]:
-                # Show case type for existing matter
+            
+            # Show new matter input in an expander (collapsed by default)
+            with st.expander("✏️ תיק חדש / New Matter", expanded=False):
+                st.caption("💡 השאר את בחירת התיק ריק כדי ליצור תיק חדש")
+                new_matter_name = st.text_input("שם תיק חדש / New Matter Name", key="new_matter_name")
+                new_case_type = st.text_input("סוג תיק / Case Type", key="new_case_type")
+            
+            # Show case type for existing matter
+            if selected_matter_option not in ["-- בחר תיק / Select Matter --"]:
                 existing_matter = get_matter_by_name(data, selected_matter_option)
                 if existing_matter:
-                    st.text(f"סוג: {existing_matter.get('case_type', '-')}")
+                    st.info(f"📋 סוג תיק: {existing_matter.get('case_type', '-')}")
         
         with col2:
             # Live preview
@@ -236,9 +256,17 @@ def render_add_entry_page():
         actions = []
         total_minutes = 0
         
+        # Get existing action suggestions (prioritize current matter)
+        current_matter_id = None
+        if selected_matter_option not in ["-- בחר תיק / Select Matter --", "➕ תיק חדש / New Matter"]:
+            existing_matter = get_matter_by_name(data, selected_matter_option)
+            if existing_matter:
+                current_matter_id = existing_matter["id"]
+        
+        action_suggestions = get_unique_action_descriptions(data, current_matter_id)
+        suggestion_options = ["-- בחר פעולה / Select Action --", "✏️ הזנה חדשה / New Action"] + action_suggestions
+        
         for i in range(st.session_state.action_count):
-            col_desc, col_dur, col_del = st.columns([3, 1, 0.5])
-            
             # Default values
             default_desc = ""
             default_dur = 15
@@ -246,21 +274,72 @@ def render_add_entry_page():
                 default_desc = entry["actions"][i].get("action_description", "")
                 default_dur = entry["actions"][i].get("duration_minutes", 15)
             
-            with col_desc:
-                desc = st.text_input(
-                    f"תיאור / Description {i+1}",
-                    value=default_desc,
-                    key=f"action_desc_{i}"
+            col_select, col_dur = st.columns([3, 1])
+            
+            with col_select:
+                # Check if default_desc is in suggestions
+                if default_desc and default_desc in action_suggestions:
+                    default_idx = suggestion_options.index(default_desc)
+                else:
+                    # If editing with a custom value or new entry
+                    default_idx = 1 if default_desc else 0  # "New Action" or "Select"
+                
+                selected_action = st.selectbox(
+                    f"פעולה / Action {i+1}",
+                    options=suggestion_options,
+                    index=default_idx,
+                    key=f"action_select_{i}"
                 )
+                
+                # Show text input if "New Action" selected or if we have a non-matching default
+                if selected_action == "✏️ הזנה חדשה / New Action":
+                    desc = st.text_input(
+                        f"תיאור חדש / New Description",
+                        value=default_desc if default_desc and default_desc not in action_suggestions else "",
+                        key=f"action_desc_{i}"
+                    )
+                elif selected_action == "-- בחר פעולה / Select Action --":
+                    desc = ""
+                else:
+                    desc = selected_action
             
             with col_dur:
-                dur = st.number_input(
-                    f"דקות / Minutes",
-                    min_value=15,
-                    step=15,
-                    value=default_dur,
-                    key=f"action_dur_{i}"
-                )
+                st.markdown("**זמן / Duration**")
+                
+                # Parse default duration to hours and minutes
+                default_hours = default_dur // 60
+                default_mins = default_dur % 60
+                
+                # Create columns for HH : MM (reversed for RTL)
+                col_m, col_colon, col_h = st.columns([1, 0.3, 1])
+                
+                with col_h:
+                    hours = st.number_input(
+                        "HH",
+                        min_value=0,
+                        max_value=99,
+                        value=default_hours,
+                        key=f"action_hours_{i}",
+                        label_visibility="collapsed"
+                    )
+                
+                with col_colon:
+                    st.markdown("## :")
+                
+                with col_m:
+                    mins = st.selectbox(
+                        "MM",
+                        options=[0, 15, 30, 45],
+                        index=[0, 15, 30, 45].index(default_mins) if default_mins in [0, 15, 30, 45] else 0,
+                        key=f"action_mins_{i}",
+                        label_visibility="collapsed"
+                    )
+                
+                dur = (hours * 60) + mins
+                
+                # Ensure minimum 15 minutes
+                if dur < 15:
+                    dur = 15
             
             actions.append({
                 "action_description": desc,
@@ -268,8 +347,15 @@ def render_add_entry_page():
             })
             total_minutes += dur
         
-        # Action buttons (outside form for immediate effect)
+        # Total display for actions
         st.markdown(f"**סה״כ / Total: {format_hhmm(total_minutes)}**")
+        
+        # Add/remove action buttons (using form_submit_button)
+        col_add, col_remove = st.columns(2)
+        with col_add:
+            add_action = st.form_submit_button("➕ הוסף פעולה / Add Action")
+        with col_remove:
+            remove_action = st.form_submit_button("➖ הסר פעולה / Remove Action") if st.session_state.action_count > 1 else False
         
         st.divider()
         
@@ -299,6 +385,15 @@ def render_add_entry_page():
             use_container_width=True
         )
         
+        # Handle add/remove action buttons
+        if add_action:
+            st.session_state.action_count += 1
+            st.rerun()
+        
+        if remove_action:
+            st.session_state.action_count -= 1
+            st.rerun()
+        
         if submitted:
             # Validation
             errors = []
@@ -306,25 +401,27 @@ def render_add_entry_page():
             if not validate_date_in_range(entry_date):
                 errors.append(f"תאריך חייב להיות בין {PERIOD_START} ל-{PERIOD_END}")
             
-            # Get matter
+            # Get matter - validate that user chose either existing OR new, not both
             matter_id = None
             new_matter_created = None  # Track if we created a new matter
             
-            if selected_matter_option == "➕ תיק חדש / New Matter":
-                if not new_matter_name.strip():
-                    errors.append("שם תיק חדש נדרש / New matter name required")
-                else:
-                    # Create new matter (will be rolled back if save fails)
-                    new_matter_created = upsert_matter(data, new_matter_name, new_case_type)
-                    matter_id = new_matter_created["id"]
-            elif selected_matter_option == "-- בחר תיק / Select Matter --":
-                errors.append("יש לבחור תיק / Please select a matter")
-            else:
+            has_existing_matter = selected_matter_option not in ["-- בחר תיק / Select Matter --"]
+            has_new_matter = new_matter_name.strip() != ""
+            
+            if has_existing_matter and has_new_matter:
+                errors.append("לא ניתן לבחור תיק קיים ולמלא תיק חדש בו זמנית / Cannot select existing matter AND create new matter")
+            elif has_new_matter:
+                # Create new matter (will be rolled back if save fails)
+                new_matter_created = upsert_matter(data, new_matter_name, new_case_type)
+                matter_id = new_matter_created["id"]
+            elif has_existing_matter:
                 existing = get_matter_by_name(data, selected_matter_option)
                 if existing:
                     matter_id = existing["id"]
                 else:
                     errors.append("תיק לא נמצא / Matter not found")
+            else:
+                errors.append("יש לבחור תיק קיים או למלא פרטי תיק חדש / Please select existing matter or fill new matter details")
             
             # Validate actions
             valid_actions = [a for a in actions if a["action_description"].strip()]
@@ -429,18 +526,6 @@ def render_add_entry_page():
                     if new_matter_created:
                         data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
                     st.error(f"Error saving entry: {e}")
-    
-    # Add/remove action buttons (outside form)
-    col_add, col_remove = st.columns(2)
-    with col_add:
-        if st.button("➕ הוסף פעולה / Add Action"):
-            st.session_state.action_count += 1
-            st.rerun()
-    with col_remove:
-        if st.session_state.action_count > 1:
-            if st.button("➖ הסר פעולה / Remove Action"):
-                st.session_state.action_count -= 1
-                st.rerun()
     
     # Cancel edit button
     if is_edit:
@@ -640,10 +725,33 @@ def render_matters_page():
     st.title("📁 תיקים / Matters")
     
     data = st.session_state.data
+    
+    # Add new matter form
+    with st.expander("➕ הוספת תיק חדש / Add New Matter", expanded=False):
+        with st.form("add_matter_form"):
+            new_name = st.text_input("שם תיק / Matter Name")
+            new_case_type = st.text_input("סוג תיק / Case Type")
+            
+            if st.form_submit_button("💾 שמור תיק / Save Matter", use_container_width=True):
+                if new_name.strip():
+                    # Check if matter already exists
+                    existing = get_matter_by_name(data, new_name)
+                    if existing:
+                        st.error("תיק בשם זה כבר קיים / Matter with this name already exists")
+                    else:
+                        upsert_matter(data, new_name.strip(), new_case_type.strip())
+                        if save_and_reload():
+                            st.success("✅ תיק נוסף בהצלחה / Matter added successfully!")
+                            st.rerun()
+                else:
+                    st.error("שם תיק נדרש / Matter name required")
+    
+    st.divider()
+    
     matters = get_all_matters(data)
     
     if not matters:
-        st.info("אין תיקים עדיין / No matters yet. Add entries to create matters.")
+        st.info("אין תיקים עדיין / No matters yet. Use the form above to add matters.")
         return
     
     # Matters table

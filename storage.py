@@ -493,3 +493,32 @@ def get_matter_total_minutes(data: Dict[str, Any], matter_id: str) -> int:
     """
     entries = get_entries_by_matter(data, matter_id)
     return sum(e.get("total_minutes", 0) for e in entries)
+
+
+def get_unique_action_descriptions(data: Dict[str, Any], matter_id: Optional[str] = None) -> List[str]:
+    """
+    Get unique action descriptions from all entries.
+    
+    Args:
+        data: Data dictionary
+        matter_id: Optional matter ID to prioritize (those actions listed first)
+        
+    Returns:
+        List of unique action descriptions, sorted with matter-specific first
+    """
+    matter_actions = set()
+    other_actions = set()
+    
+    for entry in data.get("entries", []):
+        for action in entry.get("actions", []):
+            desc = action.get("action_description", "").strip()
+            if desc:
+                if matter_id and entry.get("matter_id") == matter_id:
+                    matter_actions.add(desc)
+                else:
+                    other_actions.add(desc)
+    
+    # Return matter actions first, then others (excluding duplicates)
+    result = sorted(matter_actions)
+    result.extend(sorted(other_actions - matter_actions))
+    return result

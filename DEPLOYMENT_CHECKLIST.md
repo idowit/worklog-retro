@@ -45,7 +45,7 @@
 - [x] Null-safe filtering (handles deleted matters)
 
 ### ✅ Export Features
-- [x] CSV export (work entries)
+- [x] CSV export (work entries) with HH:MM time format
 - [x] CSV export (weekly summary)
 - [x] PDF report with Hebrew support
 - [x] UTF-8 BOM for Excel compatibility

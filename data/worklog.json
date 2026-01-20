@@ -1,0 +1,30 @@
+{
+  "matters": [
+    {
+      "id": "8c375818-e51d-4ed1-b46c-4293c9d25cb8",
+      "name": "בדיקה",
+      "case_type": "שדכשכד",
+      "created_at": "2026-01-20T20:35:38.465562"
+    }
+  ],
+  "entries": [
+    {
+      "id": "2e85f0e9-7b90-416f-9493-a33176e1096e",
+      "entry_date": "2024-06-14",
+      "week_index": 2,
+      "matter_id": "8c375818-e51d-4ed1-b46c-4293c9d25cb8",
+      "actions": [
+        {
+          "action_description": "עידו בודק",
+          "duration_minutes": 150
+        }
+      ],
+      "total_minutes": 150,
+      "invoice_original_filename": null,
+      "invoice_storage_filename": null,
+      "invoice_path": null,
+      "created_at": "2026-01-20T20:35:38.465562",
+      "updated_at": "2026-01-20T20:35:38.465562"
+    }
+  ]
+}
