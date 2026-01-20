@@ -191,6 +191,7 @@ def register_hebrew_font():
     """
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    import logging
     
     font_path = FONTS_DIR / "NotoSansHebrew-Regular.ttf"
     
@@ -198,11 +199,12 @@ def register_hebrew_font():
         try:
             pdfmetrics.registerFont(TTFont('NotoSansHebrew', str(font_path)))
             return 'NotoSansHebrew'
-        except Exception:
-            pass
-    
-    # Fallback to default
-    return 'Helvetica'
+        except Exception as e:
+            logging.warning(f"Failed to register Hebrew font: {e}. Hebrew text may not display correctly.")
+            return 'Helvetica'
+    else:
+        logging.warning(f"Hebrew font not found at {font_path}. Hebrew text may not display correctly.")
+        return 'Helvetica'
 
 
 def generate_pdf_report(data: Dict[str, Any],

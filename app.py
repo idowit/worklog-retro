@@ -83,6 +83,18 @@ def save_and_reload():
         return False
 
 
+def auto_save():
+    """
+    Auto-save current session data without reloading.
+    Used for background saves to prevent data loss.
+    """
+    try:
+        save_data(st.session_state.data)
+        return True
+    except Exception:
+        return False
+
+
 # ============================================================================
 # SIDEBAR NAVIGATION
 # ============================================================================
@@ -296,13 +308,15 @@ def render_add_entry_page():
             
             # Get matter
             matter_id = None
+            new_matter_created = None  # Track if we created a new matter
+            
             if selected_matter_option == "➕ תיק חדש / New Matter":
                 if not new_matter_name.strip():
                     errors.append("שם תיק חדש נדרש / New matter name required")
                 else:
-                    # Create new matter
-                    new_matter = upsert_matter(data, new_matter_name, new_case_type)
-                    matter_id = new_matter["id"]
+                    # Create new matter (will be rolled back if save fails)
+                    new_matter_created = upsert_matter(data, new_matter_name, new_case_type)
+                    matter_id = new_matter_created["id"]
             elif selected_matter_option == "-- בחר תיק / Select Matter --":
                 errors.append("יש לבחור תיק / Please select a matter")
             else:
@@ -323,48 +337,98 @@ def render_add_entry_page():
                     errors.append(f"פעולה {i}: {error}")
             
             if errors:
+                # Rollback new matter if it was created
+                if new_matter_created:
+                    data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
+                
                 for error in errors:
                     st.error(error)
             else:
-                # Handle invoice
+                # Prepare invoice info (but don't save file yet)
                 invoice_info = None
+                old_invoice_to_delete = None
+                new_invoice_file = None
                 
                 if uploaded_file:
-                    # Save new invoice
-                    invoice_info = save_invoice_file(uploaded_file)
-                    # Delete old invoice if exists
+                    # Mark for saving after successful entry save
+                    new_invoice_file = uploaded_file
+                    # Mark old invoice for deletion
                     if entry and entry.get("invoice_storage_filename"):
-                        delete_invoice_file(entry["invoice_storage_filename"])
+                        old_invoice_to_delete = entry["invoice_storage_filename"]
                 elif remove_invoice and entry:
                     # Remove invoice
                     if entry.get("invoice_storage_filename"):
-                        delete_invoice_file(entry["invoice_storage_filename"])
+                        old_invoice_to_delete = entry["invoice_storage_filename"]
                     invoice_info = {}  # Empty dict signals removal
                 elif entry and entry.get("invoice_original_filename") and not remove_invoice:
                     # Keep existing
                     invoice_info = None  # None means keep existing
                 
-                # Save entry
-                if is_edit:
-                    update_entry(
-                        data, 
-                        st.session_state.edit_entry_id,
-                        entry_date,
-                        matter_id,
-                        valid_actions,
-                        invoice_info
-                    )
-                else:
-                    add_entry(data, entry_date, matter_id, valid_actions, 
-                             invoice_info if invoice_info else None)
-                
-                if save_and_reload():
-                    st.success("✅ נשמר בהצלחה / Saved successfully!")
-                    st.session_state.edit_entry_id = None
-                    st.session_state.action_count = 1
-                    if 'actions_initialized' in st.session_state:
-                        del st.session_state.actions_initialized
-                    st.rerun()
+                # Save entry first
+                try:
+                    if is_edit:
+                        update_entry(
+                            data, 
+                            st.session_state.edit_entry_id,
+                            entry_date,
+                            matter_id,
+                            valid_actions,
+                            invoice_info
+                        )
+                    else:
+                        add_entry(data, entry_date, matter_id, valid_actions, 
+                                 invoice_info if invoice_info else None)
+                    
+                    # Try to save data
+                    if save_and_reload():
+                        # Only now save the invoice file (after successful data save)
+                        if new_invoice_file:
+                            invoice_info = save_invoice_file(new_invoice_file)
+                            # Update the entry with invoice info
+                            if is_edit:
+                                entry_to_update = None
+                                for e in st.session_state.data.get("entries", []):
+                                    if e["id"] == st.session_state.edit_entry_id:
+                                        entry_to_update = e
+                                        break
+                                if entry_to_update:
+                                    entry_to_update["invoice_original_filename"] = invoice_info.get("original_filename")
+                                    entry_to_update["invoice_storage_filename"] = invoice_info.get("storage_filename")
+                                    entry_to_update["invoice_path"] = invoice_info.get("path")
+                            else:
+                                # Get the last added entry
+                                if st.session_state.data.get("entries"):
+                                    last_entry = st.session_state.data["entries"][-1]
+                                    last_entry["invoice_original_filename"] = invoice_info.get("original_filename")
+                                    last_entry["invoice_storage_filename"] = invoice_info.get("storage_filename")
+                                    last_entry["invoice_path"] = invoice_info.get("path")
+                            # Save again with invoice info
+                            save_and_reload()
+                            
+                            # Delete old invoice after successful save
+                            if old_invoice_to_delete:
+                                delete_invoice_file(old_invoice_to_delete)
+                        elif old_invoice_to_delete and not new_invoice_file:
+                            # Just delete old invoice
+                            delete_invoice_file(old_invoice_to_delete)
+                        
+                        st.success("✅ נשמר בהצלחה / Saved successfully!")
+                        st.session_state.edit_entry_id = None
+                        st.session_state.action_count = 1
+                        if 'actions_initialized' in st.session_state:
+                            del st.session_state.actions_initialized
+                        st.rerun()
+                    else:
+                        # Save failed - rollback new matter
+                        if new_matter_created:
+                            data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
+                        st.error("Failed to save entry")
+                        
+                except Exception as e:
+                    # Rollback on any error
+                    if new_matter_created:
+                        data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
+                    st.error(f"Error saving entry: {e}")
     
     # Add/remove action buttons (outside form)
     col_add, col_remove = st.columns(2)
@@ -440,13 +504,20 @@ def render_weekly_view_page():
         filtered_entries = [e for e in filtered_entries if e["matter_id"] == matter_filter_id]
     
     if case_type_filter:
-        filtered_entries = [e for e in filtered_entries 
-                           if get_matter_by_id(data, e["matter_id"]).get("case_type") == case_type_filter]
+        filtered_entries = [
+            e for e in filtered_entries 
+            if (matter := get_matter_by_id(data, e["matter_id"])) 
+            and matter.get("case_type") == case_type_filter
+        ]
     
-    filtered_entries = [e for e in filtered_entries 
-                       if date.fromisoformat(e["entry_date"]) >= date_start]
-    filtered_entries = [e for e in filtered_entries 
-                       if date.fromisoformat(e["entry_date"]) <= date_end]
+    # Apply date filters with error handling
+    try:
+        filtered_entries = [e for e in filtered_entries 
+                           if date.fromisoformat(e["entry_date"]) >= date_start]
+        filtered_entries = [e for e in filtered_entries 
+                           if date.fromisoformat(e["entry_date"]) <= date_end]
+    except (ValueError, TypeError) as e:
+        st.warning(f"Some entries have invalid dates and were skipped: {e}")
     
     # Calculate week totals
     week_totals = {}

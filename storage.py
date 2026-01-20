@@ -140,6 +140,28 @@ def load_data() -> Dict[str, Any]:
         if "matters" not in raw_data or "entries" not in raw_data:
             raise ValueError("Data file must contain 'matters' and 'entries' arrays")
         
+        # Validate matters schema
+        for i, matter in enumerate(raw_data.get("matters", [])):
+            if not isinstance(matter, dict):
+                raise ValueError(f"Matter {i} is not a valid object")
+            required_fields = ["id", "name", "created_at"]
+            for field in required_fields:
+                if field not in matter:
+                    raise ValueError(f"Matter {i} missing required field: {field}")
+        
+        # Validate entries schema
+        for i, entry in enumerate(raw_data.get("entries", [])):
+            if not isinstance(entry, dict):
+                raise ValueError(f"Entry {i} is not a valid object")
+            required_fields = ["id", "entry_date", "week_index", "matter_id", "actions", "total_minutes"]
+            for field in required_fields:
+                if field not in entry:
+                    raise ValueError(f"Entry {i} missing required field: {field}")
+            
+            # Validate actions array
+            if not isinstance(entry.get("actions"), list):
+                raise ValueError(f"Entry {i} actions must be an array")
+        
         return _deserialize_data(raw_data)
         
     except json.JSONDecodeError as e:
@@ -153,11 +175,21 @@ def save_data(data: Dict[str, Any]) -> None:
     Save data to JSON file using atomic write.
     
     Uses temp file + rename pattern for safe writes.
+    Creates a backup file before saving.
     
     Args:
         data: Data dictionary with matters and entries
     """
     ensure_directories()
+    
+    # Create backup of existing file before saving
+    backup_file = DATA_DIR / "worklog.json.bak"
+    if DATA_FILE.exists():
+        try:
+            shutil.copy2(DATA_FILE, backup_file)
+        except Exception:
+            # Don't fail if backup creation fails, but continue with save
+            pass
     
     serialized = _serialize_data(data)
     
