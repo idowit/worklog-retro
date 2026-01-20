@@ -676,7 +676,8 @@ def render_weekly_view_page():
                             st.markdown(f"**{entry['entry_date']}** - {format_hhmm(entry['total_minutes'])}")
                             
                             for action in entry.get("actions", []):
-                                st.markdown(f"  • {action['action_description']} ({format_hhmm(action['duration_minutes'])})")
+                                action_date = action.get('action_date', entry['entry_date'])
+                                st.markdown(f"  • [{action_date}] {action['action_description']} ({format_hhmm(action['duration_minutes'])})")
                             
                             if entry.get("invoice_original_filename"):
                                 st.markdown(f"📎 {entry['invoice_original_filename']}")
