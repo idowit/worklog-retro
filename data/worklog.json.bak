@@ -5,12 +5,6 @@
       "name": "בדיקה",
       "case_type": "שדכשכד",
       "created_at": "2026-01-20T20:35:38.465562"
-    },
-    {
-      "id": "b896b0e4-fdd2-40a3-9e46-2f1a7aea31b2",
-      "name": "שם תיק בדיקה שנייה",
-      "case_type": "סוג של עידו בודק",
-      "created_at": "2026-01-20T22:23:05.314508"
     }
   ],
   "entries": [
@@ -51,25 +45,6 @@
       "invoice_path": null,
       "created_at": "2026-01-20T22:19:26.961929",
       "updated_at": "2026-01-20T22:19:26.961929"
-    },
-    {
-      "id": "a4cf8d68-edb8-470f-8c66-e22c0116dd70",
-      "entry_date": "2024-06-01",
-      "week_index": 1,
-      "matter_id": "b896b0e4-fdd2-40a3-9e46-2f1a7aea31b2",
-      "actions": [
-        {
-          "action_description": "עידו בודק פעולה עם תיק של בדיקה שנייה",
-          "duration_minutes": 210,
-          "action_date": "2024-06-01"
-        }
-      ],
-      "total_minutes": 210,
-      "invoice_original_filename": null,
-      "invoice_storage_filename": null,
-      "invoice_path": null,
-      "created_at": "2026-01-20T22:23:05.314508",
-      "updated_at": "2026-01-20T22:23:05.314508"
     }
   ]
 }

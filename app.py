@@ -21,7 +21,7 @@ from utils import (
 from storage import (
     load_data, save_data,
     get_matter_by_id, get_matter_by_name, get_all_matters,
-    upsert_matter, get_all_entries, get_entries_by_week,
+    upsert_matter, update_matter, delete_matter, get_all_entries, get_entries_by_week,
     add_entry, update_entry, delete_entry,
     save_invoice_file, delete_invoice_file, get_invoice_path,
     get_matter_total_minutes, get_unique_action_descriptions
@@ -178,364 +178,399 @@ def render_add_entry_page():
         st.title("➕ הוספת רישום / Add Entry")
         entry = None
     
-    # Form
-    with st.form("entry_form"):
-        col1, col2 = st.columns(2)
+    
+    # Form - removed st.form to allow dynamic "New Action" showing
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Matter selection
+        matters = get_all_matters(data)
+        matter_names = [m["name"] for m in matters]
         
-        with col1:
-            # Matter selection
-            matters = get_all_matters(data)
-            matter_names = [m["name"] for m in matters]
-            
-            # Simple options - just select matter or nothing
-            matter_options = ["-- בחר תיק / Select Matter --"] + matter_names
-            
-            if entry:
-                current_matter = get_matter_by_id(data, entry["matter_id"])
-                default_idx = matter_options.index(current_matter["name"]) if current_matter else 0
-            else:
-                default_idx = 0
-            
-            selected_matter_option = st.selectbox(
-                "תיק / Matter",
-                options=matter_options,
-                index=default_idx
-            )
-            
-            # New matter fields - always available in expander
-            new_matter_name = ""
-            new_case_type = ""
-            
-            # Show new matter input in an expander (collapsed by default)
-            with st.expander("✏️ תיק חדש / New Matter", expanded=False):
-                st.caption("💡 השאר את בחירת התיק ריק כדי ליצור תיק חדש")
-                new_matter_name = st.text_input("שם תיק חדש / New Matter Name", key="new_matter_name")
-                new_case_type = st.text_input("סוג תיק / Case Type", key="new_case_type")
-            
-            # Show case type for existing matter
-            if selected_matter_option not in ["-- בחר תיק / Select Matter --"]:
-                existing_matter = get_matter_by_name(data, selected_matter_option)
-                if existing_matter:
-                    st.info(f"📋 סוג תיק: {existing_matter.get('case_type', '-')}")
+        # Simple options - just select matter or nothing
+        matter_options = ["-- בחר תיק / Select Matter --"] + matter_names
         
-        with col2:
-            # Statistics panel instead of date preview
-            st.markdown("### סטטיסטיקה / Statistics")
-            st.info(f"**תיקים קיימים / Matters:** {len(get_all_matters(data))}")
+        if entry:
+            current_matter = get_matter_by_id(data, entry["matter_id"])
+            default_idx = matter_options.index(current_matter["name"]) if current_matter else 0
+        else:
+            default_idx = 0
         
-        st.divider()
+        selected_matter_option = st.selectbox(
+            "תיק / Matter",
+            options=matter_options,
+            index=default_idx
+        )
         
-        # Actions editor
-        st.markdown("### פעולות / Actions")
+        # New matter fields - always available in expander
+        new_matter_name = ""
+        new_case_type = ""
         
-        # Determine initial action count
-        if entry and 'actions_initialized' not in st.session_state:
-            st.session_state.action_count = max(1, len(entry.get("actions", [])))
-            st.session_state.actions_initialized = True
+        # Show new matter input in an expander (collapsed by default)
+        with st.expander("✏️ תיק חדש / New Matter", expanded=False):
+            st.caption("💡 השאר את בחירת התיק ריק כדי ליצור תיק חדש")
+            new_matter_name = st.text_input("שם תיק חדש / New Matter Name", key="new_matter_name")
+            new_case_type = st.text_input("סוג תיק / Case Type", key="new_case_type")
         
-        actions = []
-        total_minutes = 0
-        
-        # Get existing action suggestions (prioritize current matter)
-        current_matter_id = None
-        if selected_matter_option not in ["-- בחר תיק / Select Matter --", "➕ תיק חדש / New Matter"]:
+        # Show case type for existing matter
+        if selected_matter_option not in ["-- בחר תיק / Select Matter --"]:
             existing_matter = get_matter_by_name(data, selected_matter_option)
             if existing_matter:
-                current_matter_id = existing_matter["id"]
+                st.info(f"📋 סוג תיק: {existing_matter.get('case_type', '-')}")
+    
+    with col2:
+        # Statistics panel instead of date preview
+        st.markdown("### סטטיסטיקה / Statistics")
+        st.info(f"**תיקים קיימים / Matters:** {len(get_all_matters(data))}")
+    
+    st.divider()
+    
+    # Actions editor
+    st.markdown("### פעולות / Actions")
+    
+    # Determine initial action count and clear stale state
+    if entry and 'actions_initialized' not in st.session_state:
+        st.session_state.action_count = max(1, len(entry.get("actions", [])))
+        st.session_state.actions_initialized = True
+        # Clear any stale current_actions from previous edits
+        if 'current_actions' in st.session_state:
+            del st.session_state.current_actions
+    elif 'actions_initialized' not in st.session_state:
+        # New entry mode
+        st.session_state.action_count = 1
+        st.session_state.actions_initialized = True
+        if 'current_actions' in st.session_state:
+            del st.session_state.current_actions
         
-        action_suggestions = get_unique_action_descriptions(data, current_matter_id)
-        suggestion_options = ["-- בחר פעולה / Select Action --", "✏️ הזנה חדשה / New Action"] + action_suggestions
+    actions = []
+    total_minutes = 0
+    
+    # Get existing action suggestions (prioritize current matter)
+    current_matter_id = None
+    if selected_matter_option not in ["-- בחר תיק / Select Matter --", "➕ תיק חדש / New Matter"]:
+        existing_matter = get_matter_by_name(data, selected_matter_option)
+        if existing_matter:
+            current_matter_id = existing_matter["id"]
+    
+    action_suggestions = get_unique_action_descriptions(data, current_matter_id)
+    suggestion_options = ["-- בחר פעולה / Select Action --", "✏️ הזנה חדשה / New Action"] + action_suggestions
+    
+    # Track which action was deleted in this run
+    delete_action_index = None
+
+    for i in range(st.session_state.action_count):
+        # Default values initialization
+        default_desc = ""
+        default_dur = 15
+        default_date = PERIOD_START
         
-        for i in range(st.session_state.action_count):
-            # Default values
-            default_desc = ""
-            default_dur = 15
-            default_date = PERIOD_START  # Default to period start
+        # Determine source of truth for defaults:
+        # 1. current_actions (if we just deleted/manipulated the list)
+        # 2. entry (if we are editing an existing record)
+        source_action = None
+        if 'current_actions' in st.session_state and i < len(st.session_state.current_actions):
+            source_action = st.session_state.current_actions[i]
+        elif entry and i < len(entry.get("actions", [])):
+            source_action = entry["actions"][i]
+        
+        if source_action:
+            default_desc = source_action.get("action_description", "")
+            default_dur = source_action.get("duration_minutes", 15)
+            # Get action date or fall back to entry date (if migration handled it)
+            action_date_str = source_action.get("action_date", source_action.get("entry_date")) 
             
-            if entry and i < len(entry.get("actions", [])):
-                default_desc = entry["actions"][i].get("action_description", "")
-                default_dur = entry["actions"][i].get("duration_minutes", 15)
-                # Get action date or fall back to entry date
-                action_date_str = entry["actions"][i].get("action_date", entry.get("entry_date"))
-                if action_date_str:
-                    try:
-                        default_date = date.fromisoformat(action_date_str)
-                    except:
-                        default_date = PERIOD_START
-            
-            # Layout: Date | Action | Duration
-            col_date, col_select, col_dur = st.columns([1, 2, 1.5])
-            
-            with col_date:
-                action_date = st.date_input(
-                    f"תאריך / Date {i+1}",
-                    value=default_date,
-                    min_value=PERIOD_START,
-                    max_value=PERIOD_END,
-                    format="YYYY-MM-DD",
-                    key=f"action_date_{i}"
-                )
-            
-            with col_select:
-                # Check if default_desc is in suggestions
-                if default_desc and default_desc in action_suggestions:
-                    default_idx = suggestion_options.index(default_desc)
-                else:
-                    # If editing with a custom value or new entry
-                    default_idx = 1 if default_desc else 0  # "New Action" or "Select"
-                
-                selected_action = st.selectbox(
-                    f"פעולה / Action {i+1}",
-                    options=suggestion_options,
-                    index=default_idx,
-                    key=f"action_select_{i}"
-                )
-                
-                # Show text input if "New Action" selected or if we have a non-matching default
-                if selected_action == "✏️ הזנה חדשה / New Action":
-                    desc = st.text_input(
-                        f"תיאור חדש / New Description",
-                        value=default_desc if default_desc and default_desc not in action_suggestions else "",
-                        key=f"action_desc_{i}"
-                    )
-                elif selected_action == "-- בחר פעולה / Select Action --":
-                    desc = ""
-                else:
-                    desc = selected_action
-            
-            with col_dur:
-                st.markdown("**זמן / Duration**")
-                
-                # Parse default duration to hours and minutes
-                default_hours = default_dur // 60
-                default_mins = default_dur % 60
-                
-                # Create columns for HH : MM (reversed for RTL)
-                col_m, col_colon, col_h = st.columns([1, 0.3, 1])
-                
-                with col_h:
-                    hours = st.number_input(
-                        "HH",
-                        min_value=0,
-                        max_value=99,
-                        value=default_hours,
-                        key=f"action_hours_{i}",
-                        label_visibility="collapsed"
-                    )
-                
-                with col_colon:
-                    st.markdown("## :")
-                
-                with col_m:
-                    mins = st.selectbox(
-                        "MM",
-                        options=[0, 15, 30, 45],
-                        index=[0, 15, 30, 45].index(default_mins) if default_mins in [0, 15, 30, 45] else 0,
-                        key=f"action_mins_{i}",
-                        label_visibility="collapsed"
-                    )
-                
-                dur = (hours * 60) + mins
-                
-                # Ensure minimum 15 minutes
-                if dur < 15:
-                    dur = 15
-            
-            actions.append({
-                "action_description": desc,
-                "duration_minutes": dur,
-                "action_date": action_date.isoformat()
-            })
-            total_minutes += dur
+            if action_date_str:
+                try:
+                    default_date = date.fromisoformat(str(action_date_str))
+                except:
+                    default_date = PERIOD_START
         
-        # Total display for actions
-        st.markdown(f"**סה״כ / Total: {format_hhmm(total_minutes)}**")
+        # Layout: Date | Action | Duration | Delete
+        col_date, col_select, col_dur, col_del = st.columns([1, 2, 1.2, 0.3])
         
-        # Add/remove action buttons (using form_submit_button)
-        col_add, col_remove = st.columns(2)
-        with col_add:
-            add_action = st.form_submit_button("➕ הוסף פעולה / Add Action")
-        with col_remove:
-            remove_action = st.form_submit_button("➖ הסר פעולה / Remove Action") if st.session_state.action_count > 1 else False
+        with col_date:
+            action_date = st.date_input(
+                f"תאריך / Date {i+1}",
+                value=default_date,
+                min_value=PERIOD_START,
+                max_value=PERIOD_END,
+                format="YYYY-MM-DD",
+                key=f"action_date_{i}"
+            )
         
-        st.divider()
-        
-        # Invoice upload
-        st.markdown("### חשבונית / Invoice (Optional)")
-        
-        current_invoice = None
-        if entry and entry.get("invoice_original_filename"):
-            current_invoice = entry.get("invoice_original_filename")
-            st.info(f"📎 חשבונית נוכחית / Current: {current_invoice}")
-        
-        uploaded_file = st.file_uploader(
-            "העלאת חשבונית / Upload Invoice",
-            type=["pdf", "png", "jpg", "jpeg", "doc", "docx"],
-            key="invoice_upload"
-        )
-        
-        remove_invoice = False
-        if current_invoice:
-            remove_invoice = st.checkbox("הסר חשבונית / Remove Invoice")
-        
-        st.divider()
-        
-        # Submit button
-        submitted = st.form_submit_button(
-            "💾 שמור / Save" if not is_edit else "💾 עדכן / Update",
-            use_container_width=True
-        )
-        
-        # Handle add/remove action buttons
-        if add_action:
-            st.session_state.action_count += 1
-            st.rerun()
-        
-        if remove_action:
-            st.session_state.action_count -= 1
-            st.rerun()
-        
-        if submitted:
-            # Validation
-            errors = []
-            
-            # Validate action dates instead of entry date
-            for i, action in enumerate(actions, 1):
-                action_date_str = action.get("action_date")
-                if action_date_str:
-                    try:
-                        action_date_obj = date.fromisoformat(action_date_str)
-                        if not validate_date_in_range(action_date_obj):
-                            errors.append(f"תאריך פעולה {i} חייב להיות בין {PERIOD_START} ל-{PERIOD_END} / Action {i} date must be between {PERIOD_START} and {PERIOD_END}")
-                    except:
-                        errors.append(f"תאריך פעולה {i} לא תקין / Action {i} date is invalid")
-            
-            # Get matter - validate that user chose either existing OR new, not both
-            matter_id = None
-            new_matter_created = None  # Track if we created a new matter
-            
-            has_existing_matter = selected_matter_option not in ["-- בחר תיק / Select Matter --"]
-            has_new_matter = new_matter_name.strip() != ""
-            
-            if has_existing_matter and has_new_matter:
-                errors.append("לא ניתן לבחור תיק קיים ולמלא תיק חדש בו זמנית / Cannot select existing matter AND create new matter")
-            elif has_new_matter:
-                # Create new matter (will be rolled back if save fails)
-                new_matter_created = upsert_matter(data, new_matter_name, new_case_type)
-                matter_id = new_matter_created["id"]
-            elif has_existing_matter:
-                existing = get_matter_by_name(data, selected_matter_option)
-                if existing:
-                    matter_id = existing["id"]
-                else:
-                    errors.append("תיק לא נמצא / Matter not found")
+        with col_select:
+            # Check if default_desc is in suggestions
+            if default_desc and default_desc in action_suggestions:
+                default_idx = suggestion_options.index(default_desc)
             else:
-                errors.append("יש לבחור תיק קיים או למלא פרטי תיק חדש / Please select existing matter or fill new matter details")
+                # If editing with a custom value or new entry
+                default_idx = 1 if default_desc else 0  # "New Action" or "Select"
             
-            # Validate actions
-            valid_actions = [a for a in actions if a["action_description"].strip()]
-            if not valid_actions:
-                errors.append("נדרשת לפחות פעולה אחת / At least one action required")
+            selected_action = st.selectbox(
+                f"פעולה / Action {i+1}",
+                options=suggestion_options,
+                index=default_idx,
+                key=f"action_select_{i}"
+            )
             
-            for i, action in enumerate(valid_actions, 1):
-                is_valid, error = validate_duration(action["duration_minutes"])
-                if not is_valid:
-                    errors.append(f"פעולה {i}: {error}")
+            # Show text input if "New Action" selected or if we have a non-matching default
+            if selected_action == "✏️ הזנה חדשה / New Action":
+                desc = st.text_input(
+                    f"תיאור חדש / New Description",
+                    value=default_desc if default_desc and default_desc not in action_suggestions else "",
+                    key=f"action_desc_{i}"
+                )
+            elif selected_action == "-- בחר פעולה / Select Action --":
+                desc = ""
+            else:
+                desc = selected_action
+        
+        with col_dur:
+            st.markdown("**זמן / Duration**")
             
-            if errors:
-                # Rollback new matter if it was created
+            # Parse default duration to hours and minutes
+            default_hours = default_dur // 60
+            default_mins = default_dur % 60
+            
+            # Create columns for HH : MM (reversed for RTL)
+            col_m, col_colon, col_h = st.columns([1, 0.3, 1])
+            
+            with col_h:
+                hours = st.number_input(
+                    "HH",
+                    min_value=0,
+                    max_value=99,
+                    value=default_hours,
+                    key=f"action_hours_{i}",
+                    label_visibility="collapsed"
+                )
+            
+            with col_colon:
+                st.markdown("## :")
+            
+            with col_m:
+                mins = st.selectbox(
+                    "MM",
+                    options=[0, 15, 30, 45],
+                    index=[0, 15, 30, 45].index(default_mins) if default_mins in [0, 15, 30, 45] else 0,
+                    key=f"action_mins_{i}",
+                    label_visibility="collapsed"
+                )
+            
+            dur = (hours * 60) + mins
+            if dur < 15: dur = 15
+        
+        with col_del:
+            st.markdown("### &nbsp;") # spacing
+            if st.button("🗑️", key=f"del_action_{i}"):
+                delete_action_index = i
+
+        actions.append({
+            "action_description": desc,
+            "duration_minutes": dur,
+            "action_date": action_date.isoformat()
+        })
+        total_minutes += dur
+
+    # Handle deletion if a button was clicked
+    if delete_action_index is not None:
+        # Remove the item
+        actions.pop(delete_action_index)
+        # Update session state
+        st.session_state.current_actions = actions
+        st.session_state.action_count = len(actions)
+        # Clear all widget keys to force reload from current_actions defaults
+        for k in list(st.session_state.keys()):
+            if k.startswith("action_"):
+                del st.session_state[k]
+        st.rerun()
+        
+    # Total display for actions
+    st.markdown(f"**סה״כ / Total: {format_hhmm(total_minutes)}**")
+    
+    # Add/remove action buttons
+    col_add, col_remove = st.columns(2)
+    with col_add:
+        add_action = st.button("➕ הוסף פעולה / Add Action")
+    with col_remove:
+        remove_action = st.button("➖ הסר פעולה / Remove Action") if st.session_state.action_count > 1 else False
+    
+    st.divider()
+    
+    # Invoice upload
+    st.markdown("### חשבונית / Invoice (Optional)")
+    
+    current_invoice = None
+    if entry and entry.get("invoice_original_filename"):
+        current_invoice = entry.get("invoice_original_filename")
+        st.info(f"📎 חשבונית נוכחית / Current: {current_invoice}")
+    
+    uploaded_file = st.file_uploader(
+        "העלאת חשבונית / Upload Invoice",
+        type=["pdf", "png", "jpg", "jpeg", "doc", "docx"],
+        key="invoice_upload"
+    )
+    
+    remove_invoice = False
+    if current_invoice:
+        remove_invoice = st.checkbox("הסר חשבונית / Remove Invoice")
+    
+    st.divider()
+    
+    # Submit button
+    submitted = st.button(
+        "💾 שמור / Save" if not is_edit else "💾 עדכן / Update",
+        use_container_width=True,
+        type="primary"
+    )
+    
+    # Handle add/remove action buttons
+    if add_action:
+        st.session_state.action_count += 1
+        st.rerun()
+    
+    if remove_action:
+        st.session_state.action_count -= 1
+        st.rerun()
+    
+    if submitted:
+        # Validation
+        errors = []
+        
+        # Validate action dates instead of entry date
+        for i, action in enumerate(actions, 1):
+            action_date_str = action.get("action_date")
+            if action_date_str:
+                try:
+                    action_date_obj = date.fromisoformat(action_date_str)
+                    if not validate_date_in_range(action_date_obj):
+                        errors.append(f"תאריך פעולה {i} חייב להיות בין {PERIOD_START} ל-{PERIOD_END} / Action {i} date must be between {PERIOD_START} and {PERIOD_END}")
+                except:
+                    errors.append(f"תאריך פעולה {i} לא תקין / Action {i} date is invalid")
+        
+        # Get matter - validate that user chose either existing OR new, not both
+        matter_id = None
+        new_matter_created = None  # Track if we created a new matter
+        
+        has_existing_matter = selected_matter_option not in ["-- בחר תיק / Select Matter --"]
+        has_new_matter = new_matter_name.strip() != ""
+        
+        if has_existing_matter and has_new_matter:
+            errors.append("לא ניתן לבחור תיק קיים ולמלא תיק חדש בו זמנית / Cannot select existing matter AND create new matter")
+        elif has_new_matter:
+            # Create new matter (will be rolled back if save fails)
+            new_matter_created = upsert_matter(data, new_matter_name, new_case_type)
+            matter_id = new_matter_created["id"]
+        elif has_existing_matter:
+            existing = get_matter_by_name(data, selected_matter_option)
+            if existing:
+                matter_id = existing["id"]
+            else:
+                errors.append("תיק לא נמצא / Matter not found")
+        else:
+            errors.append("יש לבחור תיק קיים או למלא פרטי תיק חדש / Please select existing matter or fill new matter details")
+        
+        # Validate actions
+        valid_actions = [a for a in actions if a["action_description"].strip()]
+        if not valid_actions:
+            errors.append("נדרשת לפחות פעולה אחת / At least one action required")
+        
+        for i, action in enumerate(valid_actions, 1):
+            is_valid, error = validate_duration(action["duration_minutes"])
+            if not is_valid:
+                errors.append(f"פעולה {i}: {error}")
+        
+        if errors:
+            # Rollback new matter if it was created
+            if new_matter_created:
+                data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
+            
+            for error in errors:
+                st.error(error)
+        else:
+            # Prepare invoice info (but don't save file yet)
+            invoice_info = None
+            old_invoice_to_delete = None
+            new_invoice_file = None
+            
+            if uploaded_file:
+                # Mark for saving after successful entry save
+                new_invoice_file = uploaded_file
+                # Mark old invoice for deletion
+                if entry and entry.get("invoice_storage_filename"):
+                    old_invoice_to_delete = entry["invoice_storage_filename"]
+            elif remove_invoice and entry:
+                # Remove invoice
+                if entry.get("invoice_storage_filename"):
+                    old_invoice_to_delete = entry["invoice_storage_filename"]
+                invoice_info = {}  # Empty dict signals removal
+            elif entry and entry.get("invoice_original_filename") and not remove_invoice:
+                # Keep existing
+                invoice_info = None  # None means keep existing
+            
+            # Save entry first (entry_date is calculated from action dates)
+            try:
+                if is_edit:
+                    update_entry(
+                        data, 
+                        st.session_state.edit_entry_id,
+                        PERIOD_START,  # Placeholder - actual date calculated from actions
+                        matter_id,
+                        valid_actions,
+                        invoice_info
+                    )
+                else:
+                    add_entry(data, PERIOD_START, matter_id, valid_actions, 
+                             invoice_info if invoice_info else None)  # Placeholder - actual date calculated from actions
+                
+                # Try to save data
+                if save_and_reload():
+                    # Only now save the invoice file (after successful data save)
+                    if new_invoice_file:
+                        invoice_info = save_invoice_file(new_invoice_file)
+                        # Update the entry with invoice info
+                        if is_edit:
+                            entry_to_update = None
+                            for e in st.session_state.data.get("entries", []):
+                                if e["id"] == st.session_state.edit_entry_id:
+                                    entry_to_update = e
+                                    break
+                            if entry_to_update:
+                                entry_to_update["invoice_original_filename"] = invoice_info.get("original_filename")
+                                entry_to_update["invoice_storage_filename"] = invoice_info.get("storage_filename")
+                                entry_to_update["invoice_path"] = invoice_info.get("path")
+                        else:
+                            # For new entry, it's the last one added
+                            if st.session_state.data.get("entries"):
+                                last_entry = st.session_state.data["entries"][-1]
+                                last_entry["invoice_original_filename"] = invoice_info.get("original_filename")
+                                last_entry["invoice_storage_filename"] = invoice_info.get("storage_filename")
+                                last_entry["invoice_path"] = invoice_info.get("path")
+                        
+                        save_and_reload()
+                    
+                    # Delete old invoice if needed
+                    if old_invoice_to_delete:
+                        delete_invoice_file(old_invoice_to_delete)
+                    
+                    st.success("נשמר בהצלחה! / Saved successfully!")
+                    
+                    # Reset state
+                    st.session_state.edit_entry_id = None
+                    st.session_state.action_count = 1
+                    if 'actions_initialized' in st.session_state:
+                        del st.session_state.actions_initialized
+                    if 'current_actions' in st.session_state:
+                         del st.session_state.current_actions
+                        
+                    st.session_state.current_page = "weekly_view"
+                    st.rerun()
+            except Exception as e:
+                st.error(f"שגיאה בשמירה / Error saving: {e}")
+                # Rollback new matter on save error
                 if new_matter_created:
                     data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
-                
-                for error in errors:
-                    st.error(error)
-            else:
-                # Prepare invoice info (but don't save file yet)
-                invoice_info = None
-                old_invoice_to_delete = None
-                new_invoice_file = None
-                
-                if uploaded_file:
-                    # Mark for saving after successful entry save
-                    new_invoice_file = uploaded_file
-                    # Mark old invoice for deletion
-                    if entry and entry.get("invoice_storage_filename"):
-                        old_invoice_to_delete = entry["invoice_storage_filename"]
-                elif remove_invoice and entry:
-                    # Remove invoice
-                    if entry.get("invoice_storage_filename"):
-                        old_invoice_to_delete = entry["invoice_storage_filename"]
-                    invoice_info = {}  # Empty dict signals removal
-                elif entry and entry.get("invoice_original_filename") and not remove_invoice:
-                    # Keep existing
-                    invoice_info = None  # None means keep existing
-                
-                # Save entry first (entry_date is calculated from action dates)
-                try:
-                    if is_edit:
-                        update_entry(
-                            data, 
-                            st.session_state.edit_entry_id,
-                            PERIOD_START,  # Placeholder - actual date calculated from actions
-                            matter_id,
-                            valid_actions,
-                            invoice_info
-                        )
-                    else:
-                        add_entry(data, PERIOD_START, matter_id, valid_actions, 
-                                 invoice_info if invoice_info else None)  # Placeholder - actual date calculated from actions
-                    
-                    # Try to save data
-                    if save_and_reload():
-                        # Only now save the invoice file (after successful data save)
-                        if new_invoice_file:
-                            invoice_info = save_invoice_file(new_invoice_file)
-                            # Update the entry with invoice info
-                            if is_edit:
-                                entry_to_update = None
-                                for e in st.session_state.data.get("entries", []):
-                                    if e["id"] == st.session_state.edit_entry_id:
-                                        entry_to_update = e
-                                        break
-                                if entry_to_update:
-                                    entry_to_update["invoice_original_filename"] = invoice_info.get("original_filename")
-                                    entry_to_update["invoice_storage_filename"] = invoice_info.get("storage_filename")
-                                    entry_to_update["invoice_path"] = invoice_info.get("path")
-                            else:
-                                # Get the last added entry
-                                if st.session_state.data.get("entries"):
-                                    last_entry = st.session_state.data["entries"][-1]
-                                    last_entry["invoice_original_filename"] = invoice_info.get("original_filename")
-                                    last_entry["invoice_storage_filename"] = invoice_info.get("storage_filename")
-                                    last_entry["invoice_path"] = invoice_info.get("path")
-                            # Save again with invoice info
-                            save_and_reload()
-                            
-                            # Delete old invoice after successful save
-                            if old_invoice_to_delete:
-                                delete_invoice_file(old_invoice_to_delete)
-                        elif old_invoice_to_delete and not new_invoice_file:
-                            # Just delete old invoice
-                            delete_invoice_file(old_invoice_to_delete)
-                        
-                        st.success("✅ נשמר בהצלחה / Saved successfully!")
-                        st.session_state.edit_entry_id = None
-                        st.session_state.action_count = 1
-                        if 'actions_initialized' in st.session_state:
-                            del st.session_state.actions_initialized
-                        st.rerun()
-                    else:
-                        # Save failed - rollback new matter
-                        if new_matter_created:
-                            data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
-                        st.error("Failed to save entry")
-                        
-                except Exception as e:
-                    # Rollback on any error
-                    if new_matter_created:
-                        data["matters"] = [m for m in data["matters"] if m["id"] != new_matter_created["id"]]
-                    st.error(f"Error saving entry: {e}")
-    
+
     # Cancel edit button
     if is_edit:
         if st.button("❌ ביטול / Cancel"):
@@ -764,21 +799,57 @@ def render_matters_page():
         st.info("אין תיקים עדיין / No matters yet. Use the form above to add matters.")
         return
     
-    # Matters table
-    import pandas as pd
+    # Matters table - Custom rendering to support actions
+    # Header
+    col1, col2, col3, col4, col5 = st.columns([3, 2, 1.5, 1.5, 1])
+    col1.markdown("**שם תיק / Name**")
+    col2.markdown("**סוג / Type**")
+    col3.markdown("**סה״כ זמן / Total Time**")
+    col4.markdown("**נוצר / Created**")
+    col5.markdown("**פעולות / Actions**")
     
-    matters_data = []
+    st.divider()
+    
     for matter in matters:
         total_min = get_matter_total_minutes(data, matter["id"])
-        matters_data.append({
-            "שם תיק / Name": matter["name"],
-            "סוג / Type": matter.get("case_type", ""),
-            "סה״כ זמן / Total Time": format_hhmm(total_min),
-            "נוצר / Created": matter.get("created_at", "")[:10]
-        })
+        
+        col1, col2, col3, col4, col5 = st.columns([3, 2, 1.5, 1.5, 1])
+        col1.markdown(f"{matter['name']}")
+        col2.markdown(f"{matter.get('case_type', '-')}")
+        col3.markdown(f"{format_hhmm(total_min)}")
+        col4.markdown(f"{matter.get('created_at', '')[:10]}")
+        
+        with col5:
+            if st.button("🗑️", key=f"del_matter_{matter['id']}"):
+                st.session_state.delete_matter_confirm = matter['id']
+                st.rerun()
     
-    df = pd.DataFrame(matters_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    # Delete confirmation modal-like
+    if 'delete_matter_confirm' in st.session_state and st.session_state.delete_matter_confirm:
+        matter_to_del_id = st.session_state.delete_matter_confirm
+        matter_to_del = get_matter_by_id(data, matter_to_del_id)
+        
+        if matter_to_del:
+            st.warning(f"האם למחוק את התיק '{matter_to_del['name']}'? / Delete matter '{matter_to_del['name']}'?")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ כן, מחק / Yes, Delete", key="confirm_del_matter", type="primary"):
+                    success, msg = delete_matter(data, matter_to_del_id)
+                    if success:
+                        save_and_reload()
+                        st.success(msg)
+                        del st.session_state.delete_matter_confirm
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with c2:
+                if st.button("❌ ביטול / Cancel", key="cancel_del_matter"):
+                    del st.session_state.delete_matter_confirm
+                    st.rerun()
+        else:
+            # Matter not found (maybe already deleted)
+            del st.session_state.delete_matter_confirm
+            st.rerun()
     
     # Total
     total_all = sum(get_matter_total_minutes(data, m["id"]) for m in matters)

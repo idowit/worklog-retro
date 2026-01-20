@@ -9,7 +9,7 @@ import os
 import shutil
 import tempfile
 from datetime import datetime, date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 
 from utils import generate_uuid, normalize_matter_name, compute_week_index
@@ -273,6 +273,31 @@ def upsert_matter(data: Dict[str, Any], name: str, case_type: str = "") -> Dict[
         }
         data["matters"].append(matter)
         return matter
+
+
+def delete_matter(data: Dict[str, Any], matter_id: str) -> Tuple[bool, str]:
+    """
+    Delete a matter.
+    
+    Args:
+        data: Data dictionary
+        matter_id: Matter ID to delete
+        
+    Returns:
+        Tuple (success, message)
+    """
+    # Check if matter is used in any entries
+    used_count = sum(1 for e in data.get("entries", []) if e.get("matter_id") == matter_id)
+    if used_count > 0:
+        return False, f"לא ניתן למחוק: {used_count} רישומים משוייכים לתיק זה / Cannot delete: associated with {used_count} entries"
+    
+    # Remove matter
+    initial_len = len(data.get("matters", []))
+    data["matters"] = [m for m in data.get("matters", []) if m["id"] != matter_id]
+    
+    if len(data["matters"]) < initial_len:
+        return True, "התיק נמחק בהצלחה / Matter deleted successfully"
+    return False, "תיק לא נמצא / Matter not found"
 
 
 def update_matter(data: Dict[str, Any], matter_id: str, name: str, case_type: str) -> Optional[Dict[str, Any]]:
