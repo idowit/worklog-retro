@@ -183,16 +183,6 @@ def render_add_entry_page():
         col1, col2 = st.columns(2)
         
         with col1:
-            # Date picker
-            default_date = date.fromisoformat(entry["entry_date"]) if entry else PERIOD_START
-            entry_date = st.date_input(
-                "תאריך / Date",
-                value=default_date,
-                min_value=PERIOD_START,
-                max_value=PERIOD_END,
-                format="YYYY-MM-DD"
-            )
-            
             # Matter selection
             matters = get_all_matters(data)
             matter_names = [m["name"] for m in matters]
@@ -229,19 +219,9 @@ def render_add_entry_page():
                     st.info(f"📋 סוג תיק: {existing_matter.get('case_type', '-')}")
         
         with col2:
-            # Live preview
-            st.markdown("### תצוגה מקדימה / Preview")
-            
-            if validate_date_in_range(entry_date):
-                week_idx = compute_week_index(entry_date)
-                week_start, week_end = get_week_boundaries(week_idx)
-                st.info(f"""
-                **שבוע / Week:** {week_idx}  
-                **התחלה / Start:** {week_start.isoformat()}  
-                **סיום / End:** {week_end.isoformat()}
-                """)
-            else:
-                st.warning("תאריך מחוץ לטווח / Date out of range")
+            # Statistics panel instead of date preview
+            st.markdown("### סטטיסטיקה / Statistics")
+            st.info(f"**תיקים קיימים / Matters:** {len(get_all_matters(data))}")
         
         st.divider()
         
@@ -270,11 +250,31 @@ def render_add_entry_page():
             # Default values
             default_desc = ""
             default_dur = 15
+            default_date = PERIOD_START  # Default to period start
+            
             if entry and i < len(entry.get("actions", [])):
                 default_desc = entry["actions"][i].get("action_description", "")
                 default_dur = entry["actions"][i].get("duration_minutes", 15)
+                # Get action date or fall back to entry date
+                action_date_str = entry["actions"][i].get("action_date", entry.get("entry_date"))
+                if action_date_str:
+                    try:
+                        default_date = date.fromisoformat(action_date_str)
+                    except:
+                        default_date = PERIOD_START
             
-            col_select, col_dur = st.columns([3, 1])
+            # Layout: Date | Action | Duration
+            col_date, col_select, col_dur = st.columns([1, 2, 1.5])
+            
+            with col_date:
+                action_date = st.date_input(
+                    f"תאריך / Date {i+1}",
+                    value=default_date,
+                    min_value=PERIOD_START,
+                    max_value=PERIOD_END,
+                    format="YYYY-MM-DD",
+                    key=f"action_date_{i}"
+                )
             
             with col_select:
                 # Check if default_desc is in suggestions
@@ -343,7 +343,8 @@ def render_add_entry_page():
             
             actions.append({
                 "action_description": desc,
-                "duration_minutes": dur
+                "duration_minutes": dur,
+                "action_date": action_date.isoformat()
             })
             total_minutes += dur
         
@@ -398,8 +399,16 @@ def render_add_entry_page():
             # Validation
             errors = []
             
-            if not validate_date_in_range(entry_date):
-                errors.append(f"תאריך חייב להיות בין {PERIOD_START} ל-{PERIOD_END}")
+            # Validate action dates instead of entry date
+            for i, action in enumerate(actions, 1):
+                action_date_str = action.get("action_date")
+                if action_date_str:
+                    try:
+                        action_date_obj = date.fromisoformat(action_date_str)
+                        if not validate_date_in_range(action_date_obj):
+                            errors.append(f"תאריך פעולה {i} חייב להיות בין {PERIOD_START} ל-{PERIOD_END} / Action {i} date must be between {PERIOD_START} and {PERIOD_END}")
+                    except:
+                        errors.append(f"תאריך פעולה {i} לא תקין / Action {i} date is invalid")
             
             # Get matter - validate that user chose either existing OR new, not both
             matter_id = None
@@ -461,20 +470,20 @@ def render_add_entry_page():
                     # Keep existing
                     invoice_info = None  # None means keep existing
                 
-                # Save entry first
+                # Save entry first (entry_date is calculated from action dates)
                 try:
                     if is_edit:
                         update_entry(
                             data, 
                             st.session_state.edit_entry_id,
-                            entry_date,
+                            PERIOD_START,  # Placeholder - actual date calculated from actions
                             matter_id,
                             valid_actions,
                             invoice_info
                         )
                     else:
-                        add_entry(data, entry_date, matter_id, valid_actions, 
-                                 invoice_info if invoice_info else None)
+                        add_entry(data, PERIOD_START, matter_id, valid_actions, 
+                                 invoice_info if invoice_info else None)  # Placeholder - actual date calculated from actions
                     
                     # Try to save data
                     if save_and_reload():

@@ -88,7 +88,7 @@ def generate_work_entries_csv(data: Dict[str, Any],
         for action in entry.get("actions", []):
             rows.append({
                 "week_index": entry["week_index"],
-                "entry_date": entry["entry_date"],
+                "action_date": action.get("action_date", entry["entry_date"]),  # Use action date, fallback to entry date
                 "matter_name": entry["matter_name"],
                 "case_type": entry["case_type"],
                 "action_description": action.get("action_description", ""),

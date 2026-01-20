@@ -97,12 +97,21 @@ def _deserialize_data(data: Dict[str, Any]) -> Dict[str, Any]:
         })
     
     for entry in data.get("entries", []):
+        entry_date = entry.get("entry_date")
+        
+        # Migrate actions: add action_date if not present
+        actions = entry.get("actions", [])
+        for action in actions:
+            if "action_date" not in action:
+                # Migration: use entry date for existing actions
+                action["action_date"] = entry_date
+        
         result["entries"].append({
             "id": entry["id"],
-            "entry_date": entry["entry_date"],  # Keep as string for JSON compatibility
+            "entry_date": entry_date,  # Keep for compatibility
             "week_index": entry["week_index"],
             "matter_id": entry["matter_id"],
-            "actions": entry["actions"],
+            "actions": actions,
             "total_minutes": entry["total_minutes"],
             "invoice_original_filename": entry.get("invoice_original_filename"),
             "invoice_storage_filename": entry.get("invoice_storage_filename"),
@@ -319,9 +328,9 @@ def add_entry(data: Dict[str, Any], entry_date: date, matter_id: str,
     
     Args:
         data: Data dictionary
-        entry_date: Date of the entry
+        entry_date: DEPRECATED - calculated from action dates
         matter_id: Matter ID
-        actions: List of action dicts with action_description and duration_minutes
+        actions: List of action dicts with action_description, duration_minutes, and action_date
         invoice_info: Optional dict with original_filename, storage_filename, path
         
     Returns:
@@ -329,12 +338,27 @@ def add_entry(data: Dict[str, Any], entry_date: date, matter_id: str,
     """
     now = datetime.now().isoformat()
     
+    # Calculate entry_date from action dates (use earliest)
+    action_dates = []
+    for action in actions:
+        if "action_date" in action:
+            try:
+                action_dates.append(date.fromisoformat(action["action_date"]))
+            except:
+                pass
+    
+    if action_dates:
+        calculated_entry_date = min(action_dates)
+    else:
+        # Fallback to provided entry_date if no action dates
+        calculated_entry_date = entry_date
+    
     total_minutes = sum(a.get("duration_minutes", 0) for a in actions)
-    week_index = compute_week_index(entry_date)
+    week_index = compute_week_index(calculated_entry_date)
     
     entry = {
         "id": generate_uuid(),
-        "entry_date": entry_date.isoformat(),
+        "entry_date": calculated_entry_date.isoformat(),
         "week_index": week_index,
         "matter_id": matter_id,
         "actions": actions,
@@ -359,9 +383,9 @@ def update_entry(data: Dict[str, Any], entry_id: str, entry_date: date,
     Args:
         data: Data dictionary
         entry_id: Entry ID to update
-        entry_date: New date
+        entry_date: DEPRECATED - calculated from action dates
         matter_id: New matter ID
-        actions: New actions list
+        actions: New actions list with action_date fields
         invoice_info: Optional invoice info (None means keep existing, empty dict means remove)
         
     Returns:
@@ -371,8 +395,23 @@ def update_entry(data: Dict[str, Any], entry_id: str, entry_date: date,
     if not entry:
         return None
     
-    entry["entry_date"] = entry_date.isoformat()
-    entry["week_index"] = compute_week_index(entry_date)
+    # Calculate entry_date from action dates (use earliest)
+    action_dates = []
+    for action in actions:
+        if "action_date" in action:
+            try:
+                action_dates.append(date.fromisoformat(action["action_date"]))
+            except:
+                pass
+    
+    if action_dates:
+        calculated_entry_date = min(action_dates)
+    else:
+        # Fallback to provided entry_date if no action dates
+        calculated_entry_date = entry_date
+    
+    entry["entry_date"] = calculated_entry_date.isoformat()
+    entry["week_index"] = compute_week_index(calculated_entry_date)
     entry["matter_id"] = matter_id
     entry["actions"] = actions
     entry["total_minutes"] = sum(a.get("duration_minutes", 0) for a in actions)
